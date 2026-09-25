@@ -165,30 +165,61 @@ if file_anexos and file_vendas:
             resultados = [auditar_linha(row, mapa_anexos) for _, row in df_vendas.iterrows()]
             df_resultado = pd.DataFrame(resultados)
 
+            # Filtrar apenas as inconsistências
+            df_erro_ncm = df_resultado[df_resultado["STATUS"] == "ERRO_NCM"].drop(columns=["STATUS"], errors="ignore")
+            df_erro_cclastrib = df_resultado[df_resultado["STATUS"] == "ERRO_CCLASTRIB"].drop(columns=["STATUS"], errors="ignore")
+
         st.success("Auditoria concluída com sucesso!")
 
         # Resumo Estatístico
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total de Registos", len(df_resultado))
-        col2.metric("Registos OK", len(df_resultado[df_resultado["STATUS"] == "OK"]))
-        col3.metric("Com Inconsistência", len(df_resultado[df_resultado["STATUS"] != "OK"]))
+        total_registos = len(df_resultado)
+        qtd_erro_ncm = len(df_erro_ncm)
+        qtd_erro_cclastrib = len(df_erro_cclastrib)
+        qtd_ok = total_registos - (qtd_erro_ncm + qtd_erro_cclastrib)
 
-        # Visualização da Tabela
-        st.subheader("📋 Resultado da Auditoria")
-        st.dataframe(df_resultado, use_container_width=True)
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Total de Registos", total_registos)
+        col2.metric("Registos OK", qtd_ok)
+        col3.metric("Erros de NCM", qtd_erro_ncm)
+        col4.metric("Erros de CCLASTRIB", qtd_erro_cclastrib)
 
-        # Download para Excel
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_resultado.to_excel(writer, index=False)
-        excel_bytes = buffer.getvalue()
+        st.subheader("📋 Inconsistências Encontradas")
 
-        st.download_button(
-            label="📥 Descarregar Planilha Auditada em Excel",
-            data=excel_bytes,
-            file_name="vendas_auditadas_lc214.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"
-        )
+        if qtd_erro_ncm == 0 and qtd_erro_cclastrib == 0:
+            st.balloons()
+            st.success("🎉 Nenhuma inconsistência encontrada! Todos os registos estão em conformidade.")
+        else:
+            # Guias na tela
+            tab_ncm, tab_cclastrib = st.tabs([
+                f"⚠️ Inconsistências NCM ({qtd_erro_ncm})", 
+                f"⚠️ Inconsistências CCLASTRIB ({qtd_erro_cclastrib})"
+            ])
+
+            with tab_ncm:
+                if qtd_erro_ncm > 0:
+                    st.dataframe(df_erro_ncm, use_container_width=True)
+                else:
+                    st.info("Nenhuma inconsistência de NCM encontrada.")
+
+            with tab_cclastrib:
+                if qtd_erro_cclastrib > 0:
+                    st.dataframe(df_erro_cclastrib, use_container_width=True)
+                else:
+                    st.info("Nenhuma inconsistência de CCLASTRIB encontrada.")
+
+            # Gerar Excel com 2 abas/guias separadas
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_erro_ncm.to_excel(writer, sheet_name="Inconsistências NCM", index=False)
+                df_erro_cclastrib.to_excel(writer, sheet_name="Inconsistências CCLASTRIB", index=False)
+            excel_bytes = buffer.getvalue()
+
+            st.download_button(
+                label="📥 Descarregar Planilha de Inconsistências (Excel)",
+                data=excel_bytes,
+                file_name="inconsistencias_auditadas_lc214.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary"
+            )
 else:
     st.info("👈 Envie os dois ficheiros (.xlsx) no menu lateral para começar.")
