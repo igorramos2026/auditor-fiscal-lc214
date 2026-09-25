@@ -14,8 +14,8 @@ st.set_page_config(
 CCLASTRIB_INTEGRAL = "000001"
 ARQUIVO_ANEXOS_FIXO = "anexos_lc214.xlsx"
 
-# CFOPs mapeados para regras especiais de CCLASTRIB
-CFOPS_TRANSFERENCIA = ["5151", "5152", "5153", "5155", "5156", "6151", "6152", "6153", "6155", "6156", "7151", "7152"]
+# CFOPs mapeados para regras especiais de CCLASTRIB (Incluído CFOP 5409 em Transferência)
+CFOPS_TRANSFERENCIA = ["5151", "5152", "5153", "5155", "5156", "5409", "6151", "6152", "6153", "6155", "6156", "7151", "7152"]
 CFOPS_CONSERTO = ["5915", "6915", "7915"]
 
 def formatar_cfop(cfop_raw):
@@ -221,7 +221,7 @@ if file_vendas:
                 df_erro_ncm_todos = df_resultado[df_resultado["STATUS"] == "ERRO_NCM"].copy()
                 df_erro_cclastrib_todos = df_resultado[df_resultado["STATUS"] == "ERRO_CCLASTRIB"].copy()
 
-                # Métrica de Ocorrências Afectadas por (Produto + CFOP)
+                # Métrica de Ocorrências Afetadas por (Produto + CFOP)
                 counts_ncm = df_erro_ncm_todos.groupby(["PRODUTO", "CFOP"]).size().to_dict() if not df_erro_ncm_todos.empty else {}
                 counts_cclastrib = df_erro_cclastrib_todos.groupby(["PRODUTO", "CFOP"]).size().to_dict() if not df_erro_cclastrib_todos.empty else {}
 
