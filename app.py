@@ -43,7 +43,7 @@ def formatar_ncm(ncm_raw):
 
 @st.cache_data(show_spinner=False)
 def extrair_base_anexos(file_anexos):
-    """Lê a base de anexos e armazena em cache para acelerar o uso diário."""
+    """Lê a base de anexos em segundo plano e armazena em cache."""
     xls = pd.ExcelFile(file_anexos)
     mapa_anexos = {}
     for sheet_name in xls.sheet_names:
@@ -155,36 +155,18 @@ def auditar_linha(row, mapa_anexos):
 st.title("📊 Auditor Fiscal LC 214/25")
 st.markdown("Valide automaticamente a NCM e o CCLASTRIB das suas planilhas de vendas.")
 
-st.sidebar.header("📁 Envio de Ficheiros")
+st.sidebar.header("📁 Envio de Ficheiro")
 
-# Upload da planilha de vendas (Obrigatório)
-file_vendas = st.sidebar.file_uploader("1. Planilha de Vendas (.xlsx)", type=["xlsx"])
-
-# Upload de anexos opcional (caso queira atualizar a base fixa)
-file_anexos_custom = st.sidebar.file_uploader(
-    "2. Atualizar Anexos LC 214/25 (Opcional)", 
-    type=["xlsx"], 
-    help="Envie apenas se desejar usar uma tabela de anexos diferente da padrão salva no sistema."
-)
-
-# Definição de qual fonte de anexos usar
-fonte_anexos = None
-if file_anexos_custom:
-    fonte_anexos = file_anexos_custom
-    st.sidebar.info("ℹ️ Usando tabela de anexos enviada manualmente.")
-elif os.path.exists(ARQUIVO_ANEXOS_FIXO):
-    fonte_anexos = ARQUIVO_ANEXOS_FIXO
-    st.sidebar.success("✅ Tabela de Anexos LC 214/25 (Padrão) carregada do sistema.")
-else:
-    st.sidebar.warning("⚠️ Nenhuma base de anexos encontrada no repositório. Por favor, envie a planilha de anexos.")
+# Campo ÚNICO visível para o utilizador
+file_vendas = st.sidebar.file_uploader("Selecione a Planilha de Vendas (.xlsx)", type=["xlsx"])
 
 if file_vendas:
-    if not fonte_anexos:
-        st.error("Por favor, envie o ficheiro de Anexos da LC 214/25 ou certifique-se de que 'anexos_lc214.xlsx' está no repositório.")
-    else:
-        if st.button("🚀 Iniciar Auditoria", type="primary"):
-            with st.spinner("A processar a tabela de Anexos e a auditar as vendas..."):
-                mapa_anexos = extrair_base_anexos(fonte_anexos)
+    if st.button("🚀 Iniciar Auditoria", type="primary"):
+        if not os.path.exists(ARQUIVO_ANEXOS_FIXO):
+            st.error("Erro no sistema: Base de dados da legislação não encontrada no servidor.")
+        else:
+            with st.spinner("A auditar as vendas..."):
+                mapa_anexos = extrair_base_anexos(ARQUIVO_ANEXOS_FIXO)
                 df_vendas = pd.read_excel(file_vendas, dtype=str)
                 resultados = [auditar_linha(row, mapa_anexos) for _, row in df_vendas.iterrows()]
                 df_resultado = pd.DataFrame(resultados)
