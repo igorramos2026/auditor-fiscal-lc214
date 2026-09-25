@@ -14,6 +14,20 @@ st.set_page_config(
 CCLASTRIB_INTEGRAL = "000001"
 ARQUIVO_ANEXOS_FIXO = "anexos_lc214.xlsx"
 
+# CFOPs mapeados para regras especiais de CCLASTRIB
+CFOPS_TRANSFERENCIA = ["5151", "5152", "5153", "5155", "5156", "6151", "6152", "6153", "6155", "6156", "7151", "7152"]
+CFOPS_CONSERTO = ["5915", "6915", "7915"]
+
+def formatar_cfop(cfop_raw):
+    """Garante que o CFOP tenha 4 dígitos numéricos."""
+    if pd.isna(cfop_raw) or cfop_raw is None:
+        return ""
+    s = str(cfop_raw).strip()
+    if s.endswith('.0'):
+        s = s[:-2]
+    digits = re.sub(r'\D', '', s)
+    return digits.zfill(4) if digits else s
+
 def formatar_cclastrib(val_raw):
     """Garante que o CCLASTRIB tenha sempre 6 dígitos com zeros à esquerda."""
     if pd.isna(val_raw) or val_raw is None:
@@ -63,8 +77,7 @@ def extrair_base_anexos(file_anexos):
     return mapa_anexos
 
 def auditar_linha_otimizada(row, cols_map, mapa_anexos):
-    # Otimização (Item 3): Acesso direto via colunas pré-mapeadas
-    col_filial, col_reg, col_prod, col_ncm, col_cclastrib = cols_map
+    col_filial, col_reg, col_prod, col_ncm, col_cclastrib, col_cfop = cols_map
 
     filial = str(row[col_filial]).strip() if col_filial and pd.notna(row[col_filial]) else ""
     if filial.endswith('.0'): filial = filial[:-2]
@@ -75,9 +88,11 @@ def auditar_linha_otimizada(row, cols_map, mapa_anexos):
     desc_produto = str(row[col_prod]).strip() if col_prod and pd.notna(row[col_prod]) else ""
     ncm_raw = row[col_ncm] if col_ncm and pd.notna(row[col_ncm]) else ""
     cclastrib_raw = row[col_cclastrib] if col_cclastrib and pd.notna(row[col_cclastrib]) else ""
+    cfop_raw = row[col_cfop] if col_cfop and pd.notna(row[col_cfop]) else ""
 
     ncm_fmt, ncm_digits = formatar_ncm(ncm_raw)
     cclastrib_utilizado = formatar_cclastrib(cclastrib_raw)
+    cfop = formatar_cfop(cfop_raw)
     desc_upper = desc_produto.upper()
 
     # ETAPA 1: COERÊNCIA DA NCM
@@ -102,41 +117,52 @@ def auditar_linha_otimizada(row, cols_map, mapa_anexos):
     if ncm_correta_sugerida:
         alerta = f"A Filial {filial}, do registro {registro}, do produto '{desc_produto}' está com a NCM {ncm_fmt} incorreta e a correta seria {ncm_correta_sugerida}."
         return {
-            "FILIAL": filial, "REGISTRO": registro, "PRODUTO": desc_produto,
+            "FILIAL": filial, "REGISTRO": registro, "PRODUTO": desc_produto, "CFOP": cfop,
             "STATUS": "ERRO_NCM", "ALERTA_RETORNO": alerta,
             "NCM_INFORMADA": ncm_fmt, "NCM_SUGERIDA": ncm_correta_sugerida,
             "CCLASTRIB_UTILIZADO": cclastrib_utilizado, "CCLASTRIB_CORRETO": CCLASTRIB_INTEGRAL
         }
 
-    # ETAPA 2: VALIDAR CCLASTRIB NOS ANEXOS DA LC 214/25
-    cclastrib_correto = CCLASTRIB_INTEGRAL
-    if ncm_digits in ["19012090", "19059090"]:
-        if any(term in desc_upper for term in ["PAO FRANCES", "PÃO FRANCÊS", "PAO FRANC"]):
-            cclastrib_correto = "200003"
-    elif ncm_digits == "21011200":
-        if any(term in desc_upper for term in ["EXPRESSO", "CURTO", "DUPLO", "CAPUCCINO", "CAPPUCCINO", "LATTE", "FRAPUCCINO", "MOKACCINO", "CAFE"]):
-            cclastrib_correto = "200003"
-    elif ncm_digits in ["02071413", "02071422", "04061010", "09012100", "09030010", "09030090", "15171000", "19021900", "25010020", "25010090"]:
-        cclastrib_correto = "200003"
-    elif ncm_digits == "02101200" and "BACON" in desc_upper:
-        cclastrib_correto = "200003"
+    # ETAPA 2: VALIDAR CCLASTRIB (Prioridade por CFOP)
+    cclastrib_correto = None
+
+    # Regras prioritárias por CFOP
+    if cfop in CFOPS_TRANSFERENCIA:
+        cclastrib_correto = "410002"
+    elif cfop in CFOPS_CONSERTO:
+        cclastrib_correto = "410999"
     else:
-        if ncm_digits in mapa_anexos:
-            cclastrib_correto = mapa_anexos[ncm_digits]
-        elif ncm_digits[:6] in mapa_anexos:
-            cclastrib_correto = mapa_anexos[ncm_digits[:6]]
-        elif ncm_digits[:4] in ["0201", "0202", "0203", "0204", "0207", "0209", "0302", "0303", "0304", "0713", "0901", "0903", "1101", "1102", "1103", "1104", "1106", "1701", "1902", "2501"]:
+        # Regras gerais por NCM / Descrição
+        if ncm_digits in ["19012090", "19059090"]:
+            if any(term in desc_upper for term in ["PAO FRANCES", "PÃO FRANCÊS", "PAO FRANC"]):
+                cclastrib_correto = "200003"
+        elif ncm_digits == "21011200":
+            if any(term in desc_upper for term in ["EXPRESSO", "CURTO", "DUPLO", "CAPUCCINO", "CAPPUCCINO", "LATTE", "FRAPUCCINO", "MOKACCINO", "CAFE"]):
+                cclastrib_correto = "200003"
+        elif ncm_digits in ["02071413", "02071422", "04061010", "09012100", "09030010", "09030090", "15171000", "19021900", "25010020", "25010090"]:
+            cclastrib_correto = "200003"
+        elif ncm_digits == "02101200" and "BACON" in desc_upper:
             cclastrib_correto = "200003"
 
+        if cclastrib_correto is None:
+            if ncm_digits in mapa_anexos:
+                cclastrib_correto = mapa_anexos[ncm_digits]
+            elif ncm_digits[:6] in mapa_anexos:
+                cclastrib_correto = mapa_anexos[ncm_digits[:6]]
+            elif ncm_digits[:4] in ["0201", "0202", "0203", "0204", "0207", "0209", "0302", "0303", "0304", "0713", "0901", "0903", "1101", "1102", "1103", "1104", "1106", "1701", "1902", "2501"]:
+                cclastrib_correto = "200003"
+            else:
+                cclastrib_correto = CCLASTRIB_INTEGRAL
+
     if cclastrib_utilizado == cclastrib_correto:
-        alerta = f"OK — Filial {filial}, Registro {registro}, Produto '{desc_produto}': NCM {ncm_fmt} e CCLASTRIB {cclastrib_utilizado} corretos."
+        alerta = f"OK — Filial {filial}, Registro {registro}, Produto '{desc_produto}': NCM {ncm_fmt}, CFOP {cfop} e CCLASTRIB {cclastrib_utilizado} corretos."
         status = "OK"
     else:
-        alerta = f"A Filial {filial}, do registro {registro}, do produto '{desc_produto}', da NCM {ncm_fmt} utilizou o CCLASTRIB {cclastrib_utilizado} incorreto sendo o correto {cclastrib_correto}."
+        alerta = f"A Filial {filial}, do registro {registro}, do produto '{desc_produto}' (CFOP {cfop}), da NCM {ncm_fmt} utilizou o CCLASTRIB {cclastrib_utilizado} incorreto sendo o correto {cclastrib_correto}."
         status = "ERRO_CCLASTRIB"
 
     return {
-        "FILIAL": filial, "REGISTRO": registro, "PRODUTO": desc_produto,
+        "FILIAL": filial, "REGISTRO": registro, "PRODUTO": desc_produto, "CFOP": cfop,
         "STATUS": status, "ALERTA_RETORNO": alerta,
         "NCM_INFORMADA": ncm_fmt, "NCM_SUGERIDA": ncm_fmt,
         "CCLASTRIB_UTILIZADO": cclastrib_utilizado, "CCLASTRIB_CORRETO": cclastrib_correto
@@ -144,7 +170,7 @@ def auditar_linha_otimizada(row, cols_map, mapa_anexos):
 
 # INTERFACE GRÁFICA STREAMLIT
 st.title("📊 Auditor Fiscal LC 214/25")
-st.markdown("Valide automaticamente a NCM e o CCLASTRIB das suas planilhas de vendas.")
+st.markdown("Valide automaticamente NCM, CFOP e CCLASTRIB das suas planilhas de vendas.")
 
 st.sidebar.header("📁 Envio de Ficheiro")
 file_vendas = st.sidebar.file_uploader("Selecione a Planilha de Vendas (.xlsx)", type=["xlsx"])
@@ -158,7 +184,7 @@ if file_vendas:
                 mapa_anexos = extrair_base_anexos(ARQUIVO_ANEXOS_FIXO)
                 df_vendas = pd.read_excel(file_vendas, dtype=str)
 
-                # --- ITENS 3 & 4: MAPEAMENTO RÁPIDO E VALIDAÇÃO DE COLUNAS ---
+                # Mapeamento rápido de colunas
                 col_map_dict = {str(c).strip().upper(): c for c in df_vendas.columns}
                 
                 def encontrar_coluna(opcoes):
@@ -172,11 +198,13 @@ if file_vendas:
                 col_prod = encontrar_coluna(['DESCRIÇÃO PRODUTO', 'DESCRICAO PRODUTO', 'X_DESC_PRODUTO', 'PRODUTO', 'DESCRICAO'])
                 col_ncm = encontrar_coluna(['NCM', 'X_NCM', 'NCM_PRODUTO'])
                 col_cclastrib = encontrar_coluna(['CCLASTRIB UTILIZADO', 'CCLASTRIB', 'X_CLASSTRIB', 'CLASSTRIB', 'CCLASTRIB_UTILIZADO'])
+                col_cfop = encontrar_coluna(['CFOP', 'X_CFOP', 'COD_CFOP', 'CFOP_PRODUTO', 'NOP_CFOP'])
 
-                # Item 4: Validação de Tolerância a Falhas
+                # Validação de Colunas Obrigatórias
                 faltantes = []
                 if not col_prod: faltantes.append("PRODUTO / DESCRIÇÃO")
                 if not col_ncm: faltantes.append("NCM")
+                if not col_cfop: faltantes.append("CFOP")
                 if not col_cclastrib: faltantes.append("CCLASTRIB")
 
                 if faltantes:
@@ -184,35 +212,37 @@ if file_vendas:
                     st.warning(f"**Colunas identificadas na planilha enviada:**\n`{list(df_vendas.columns)}`")
                     st.stop()
 
-                cols_map = (col_filial, col_reg, col_prod, col_ncm, col_cclastrib)
+                cols_map = (col_filial, col_reg, col_prod, col_ncm, col_cclastrib, col_cfop)
 
-                # Item 3: Processamento Otimizado
+                # Processamento Otimizado
                 resultados = [auditar_linha_otimizada(row, cols_map, mapa_anexos) for _, row in df_vendas.iterrows()]
                 df_resultado = pd.DataFrame(resultados)
 
                 df_erro_ncm_todos = df_resultado[df_resultado["STATUS"] == "ERRO_NCM"].copy()
                 df_erro_cclastrib_todos = df_resultado[df_resultado["STATUS"] == "ERRO_CCLASTRIB"].copy()
 
-                # --- ITEM 1: MÉTRICA DE IMPACTO (NOTAS AFETADAS) ---
-                counts_ncm = df_erro_ncm_todos["PRODUTO"].value_counts().to_dict()
-                counts_cclastrib = df_erro_cclastrib_todos["PRODUTO"].value_counts().to_dict()
+                # Métrica de Ocorrências Afectadas por (Produto + CFOP)
+                counts_ncm = df_erro_ncm_todos.groupby(["PRODUTO", "CFOP"]).size().to_dict() if not df_erro_ncm_todos.empty else {}
+                counts_cclastrib = df_erro_cclastrib_todos.groupby(["PRODUTO", "CFOP"]).size().to_dict() if not df_erro_cclastrib_todos.empty else {}
 
-                # Deduplicação mantendo lista despoluída (1 linha por produto) + quantidade de notas afetadas
-                df_erro_ncm = df_erro_ncm_todos.drop_duplicates(subset=["PRODUTO"]).reset_index(drop=True)
-                df_erro_ncm["NOTAS_AFETADAS"] = df_erro_ncm["PRODUTO"].map(counts_ncm)
-                
-                df_erro_cclastrib = df_erro_cclastrib_todos.drop_duplicates(subset=["PRODUTO"]).reset_index(drop=True)
-                df_erro_cclastrib["NOTAS_AFETADAS"] = df_erro_cclastrib["PRODUTO"].map(counts_cclastrib)
+                # Deduplicação por PRODUTO e CFOP para manter lista limpa
+                df_erro_ncm = df_erro_ncm_todos.drop_duplicates(subset=["PRODUTO", "CFOP"]).reset_index(drop=True)
+                if not df_erro_ncm.empty:
+                    df_erro_ncm["NOTAS_AFETADAS"] = df_erro_ncm.apply(lambda r: counts_ncm.get((r["PRODUTO"], r["CFOP"]), 1), axis=1)
 
-                # Organização clara das colunas
-                cols_ordem = ["PRODUTO", "NOTAS_AFETADAS", "NCM_INFORMADA", "NCM_SUGERIDA", "CCLASTRIB_UTILIZADO", "CCLASTRIB_CORRETO", "FILIAL", "REGISTRO", "ALERTA_RETORNO"]
+                df_erro_cclastrib = df_erro_cclastrib_todos.drop_duplicates(subset=["PRODUTO", "CFOP"]).reset_index(drop=True)
+                if not df_erro_cclastrib.empty:
+                    df_erro_cclastrib["NOTAS_AFETADAS"] = df_erro_cclastrib.apply(lambda r: counts_cclastrib.get((r["PRODUTO"], r["CFOP"]), 1), axis=1)
+
+                # Organização das Colunas
+                cols_ordem = ["PRODUTO", "CFOP", "NOTAS_AFETADAS", "NCM_INFORMADA", "NCM_SUGERIDA", "CCLASTRIB_UTILIZADO", "CCLASTRIB_CORRETO", "FILIAL", "REGISTRO", "ALERTA_RETORNO"]
                 
                 df_erro_ncm_view = df_erro_ncm[[c for c in cols_ordem if c in df_erro_ncm.columns]]
                 df_erro_cclastrib_view = df_erro_cclastrib[[c for c in cols_ordem if c in df_erro_cclastrib.columns]]
 
             st.success("Auditoria concluída com sucesso!")
 
-            # Resumo Estatístico Despoluído
+            # Resumo Estatístico
             total_linhas = len(df_resultado)
             qtd_erro_ncm = len(df_erro_ncm_view)
             qtd_erro_cclastrib = len(df_erro_cclastrib_view)
@@ -221,18 +251,18 @@ if file_vendas:
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Linhas Analisadas", total_linhas)
             col2.metric("Linhas OK", qtd_ok)
-            col3.metric("Produtos c/ Erro NCM", qtd_erro_ncm, help=f"Afeta {len(df_erro_ncm_todos)} ocorrências nas notas")
-            col4.metric("Produtos c/ Erro CCLASTRIB", qtd_erro_cclastrib, help=f"Afeta {len(df_erro_cclastrib_todos)} ocorrências nas notas")
+            col3.metric("Erros de NCM", qtd_erro_ncm, help=f"Afeta {len(df_erro_ncm_todos)} ocorrências nas notas")
+            col4.metric("Erros de CCLASTRIB", qtd_erro_cclastrib, help=f"Afeta {len(df_erro_cclastrib_todos)} ocorrências nas notas")
 
-            st.subheader("📋 Inconsistências Encontradas (Lista Única por Produto)")
+            st.subheader("📋 Inconsistências Encontradas (Agrupadas por Produto e CFOP)")
 
             if qtd_erro_ncm == 0 and qtd_erro_cclastrib == 0:
                 st.balloons()
                 st.success("🎉 Nenhuma inconsistência encontrada! Todos os registos estão em conformidade.")
             else:
                 tab_ncm, tab_cclastrib = st.tabs([
-                    f"⚠️ Inconsistências NCM ({qtd_erro_ncm} produtos)", 
-                    f"⚠️ Inconsistências CCLASTRIB ({qtd_erro_cclastrib} produtos)"
+                    f"⚠️ Inconsistências NCM ({qtd_erro_ncm} itens)", 
+                    f"⚠️ Inconsistências CCLASTRIB ({qtd_erro_cclastrib} itens)"
                 ])
 
                 with tab_ncm:
@@ -247,7 +277,7 @@ if file_vendas:
                     else:
                         st.info("Nenhuma inconsistência de CCLASTRIB encontrada.")
 
-                # Excel de Download Despoluído (Apenas 2 abas por produto com a coluna NOTAS_AFETADAS)
+                # Excel de Download
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                     df_erro_ncm_view.to_excel(writer, sheet_name="Inconsistências NCM", index=False)
