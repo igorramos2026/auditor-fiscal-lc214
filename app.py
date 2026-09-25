@@ -15,16 +15,14 @@ CCLASTRIB_INTEGRAL = "000001"
 ARQUIVO_ANEXOS_FIXO = "anexos_lc214.xlsx"
 
 def formatar_cclastrib(val_raw):
-    """Garante que o CCLASTRIB tenha sempre 6 dígitos com zeros à esquerda (ex: '000001')."""
+    """Garante que o CCLASTRIB tenha sempre 6 dígitos com zeros à esquerda."""
     if pd.isna(val_raw) or val_raw is None:
         return ""
     s = str(val_raw).strip()
     if s.endswith('.0'):
         s = s[:-2]
     digits = re.sub(r'\D', '', s)
-    if digits:
-        return digits.zfill(6)
-    return s
+    return digits.zfill(6) if digits else s
 
 def formatar_ncm(ncm_raw):
     """Garante que a NCM tenha 8 dígitos preenchidos com zeros à esquerda."""
@@ -64,26 +62,19 @@ def extrair_base_anexos(file_anexos):
                 mapa_anexos[ncm_clean] = cclastrib_aba
     return mapa_anexos
 
-def buscar_campo(row, nomes_possiveis):
-    for nome in nomes_possiveis:
-        for col in row.index:
-            if str(col).strip().upper() == nome.upper() and pd.notna(row[col]):
-                return row[col]
-    return ""
+def auditar_linha_otimizada(row, cols_map, mapa_anexos):
+    # Otimização (Item 3): Acesso direto via colunas pré-mapeadas
+    col_filial, col_reg, col_prod, col_ncm, col_cclastrib = cols_map
 
-def auditar_linha(row, mapa_anexos):
-    filial = str(buscar_campo(row, ['FILIAL', 'L_FILIAL', 'COD_FILIAL'])).strip()
-    if filial.endswith('.0'):
-        filial = filial[:-2]
+    filial = str(row[col_filial]).strip() if col_filial and pd.notna(row[col_filial]) else ""
+    if filial.endswith('.0'): filial = filial[:-2]
         
-    registro = str(buscar_campo(row, ['REGISTRO', 'L_REGISTRO_NOTA', 'REGISTRO_NOTA', 'NOTA'])).strip()
-    if registro.endswith('.0'):
-        registro = registro[:-2]
+    registro = str(row[col_reg]).strip() if col_reg and pd.notna(row[col_reg]) else ""
+    if registro.endswith('.0'): registro = registro[:-2]
 
-    desc_produto = str(buscar_campo(row, ['DESCRIÇÃO PRODUTO', 'DESCRICAO PRODUTO', 'X_DESC_PRODUTO', 'PRODUTO', 'DESCRICAO'])).strip()
-    
-    ncm_raw = buscar_campo(row, ['NCM', 'X_NCM', 'NCM_PRODUTO'])
-    cclastrib_raw = buscar_campo(row, ['CCLASTRIB UTILIZADO', 'CCLASTRIB', 'X_CLASSTRIB', 'CLASSTRIB', 'CCLASTRIB_UTILIZADO'])
+    desc_produto = str(row[col_prod]).strip() if col_prod and pd.notna(row[col_prod]) else ""
+    ncm_raw = row[col_ncm] if col_ncm and pd.notna(row[col_ncm]) else ""
+    cclastrib_raw = row[col_cclastrib] if col_cclastrib and pd.notna(row[col_cclastrib]) else ""
 
     ncm_fmt, ncm_digits = formatar_ncm(ncm_raw)
     cclastrib_utilizado = formatar_cclastrib(cclastrib_raw)
@@ -156,8 +147,6 @@ st.title("📊 Auditor Fiscal LC 214/25")
 st.markdown("Valide automaticamente a NCM e o CCLASTRIB das suas planilhas de vendas.")
 
 st.sidebar.header("📁 Envio de Ficheiro")
-
-# Campo ÚNICO visível para o utilizador
 file_vendas = st.sidebar.file_uploader("Selecione a Planilha de Vendas (.xlsx)", type=["xlsx"])
 
 if file_vendas:
@@ -165,57 +154,104 @@ if file_vendas:
         if not os.path.exists(ARQUIVO_ANEXOS_FIXO):
             st.error("Erro no sistema: Base de dados da legislação não encontrada no servidor.")
         else:
-            with st.spinner("A auditar as vendas..."):
+            with st.spinner("A processar e auditar as vendas..."):
                 mapa_anexos = extrair_base_anexos(ARQUIVO_ANEXOS_FIXO)
                 df_vendas = pd.read_excel(file_vendas, dtype=str)
-                resultados = [auditar_linha(row, mapa_anexos) for _, row in df_vendas.iterrows()]
+
+                # --- ITENS 3 & 4: MAPEAMENTO RÁPIDO E VALIDAÇÃO DE COLUNAS ---
+                col_map_dict = {str(c).strip().upper(): c for c in df_vendas.columns}
+                
+                def encontrar_coluna(opcoes):
+                    for opt in opcoes:
+                        if opt.upper() in col_map_dict:
+                            return col_map_dict[opt.upper()]
+                    return None
+
+                col_filial = encontrar_coluna(['FILIAL', 'L_FILIAL', 'COD_FILIAL'])
+                col_reg = encontrar_coluna(['REGISTRO', 'L_REGISTRO_NOTA', 'REGISTRO_NOTA', 'NOTA'])
+                col_prod = encontrar_coluna(['DESCRIÇÃO PRODUTO', 'DESCRICAO PRODUTO', 'X_DESC_PRODUTO', 'PRODUTO', 'DESCRICAO'])
+                col_ncm = encontrar_coluna(['NCM', 'X_NCM', 'NCM_PRODUTO'])
+                col_cclastrib = encontrar_coluna(['CCLASTRIB UTILIZADO', 'CCLASTRIB', 'X_CLASSTRIB', 'CLASSTRIB', 'CCLASTRIB_UTILIZADO'])
+
+                # Item 4: Validação de Tolerância a Falhas
+                faltantes = []
+                if not col_prod: faltantes.append("PRODUTO / DESCRIÇÃO")
+                if not col_ncm: faltantes.append("NCM")
+                if not col_cclastrib: faltantes.append("CCLASTRIB")
+
+                if faltantes:
+                    st.error(f"⚠️ **Coluna(s) obrigatória(s) não encontrada(s):** {', '.join(faltantes)}")
+                    st.warning(f"**Colunas identificadas na planilha enviada:**\n`{list(df_vendas.columns)}`")
+                    st.stop()
+
+                cols_map = (col_filial, col_reg, col_prod, col_ncm, col_cclastrib)
+
+                # Item 3: Processamento Otimizado
+                resultados = [auditar_linha_otimizada(row, cols_map, mapa_anexos) for _, row in df_vendas.iterrows()]
                 df_resultado = pd.DataFrame(resultados)
 
-                df_erro_ncm = df_resultado[df_resultado["STATUS"] == "ERRO_NCM"].drop(columns=["STATUS"], errors="ignore")
-                df_erro_cclastrib = df_resultado[df_resultado["STATUS"] == "ERRO_CCLASTRIB"].drop(columns=["STATUS"], errors="ignore")
+                df_erro_ncm_todos = df_resultado[df_resultado["STATUS"] == "ERRO_NCM"].copy()
+                df_erro_cclastrib_todos = df_resultado[df_resultado["STATUS"] == "ERRO_CCLASTRIB"].copy()
+
+                # --- ITEM 1: MÉTRICA DE IMPACTO (NOTAS AFETADAS) ---
+                counts_ncm = df_erro_ncm_todos["PRODUTO"].value_counts().to_dict()
+                counts_cclastrib = df_erro_cclastrib_todos["PRODUTO"].value_counts().to_dict()
+
+                # Deduplicação mantendo lista despoluída (1 linha por produto) + quantidade de notas afetadas
+                df_erro_ncm = df_erro_ncm_todos.drop_duplicates(subset=["PRODUTO"]).reset_index(drop=True)
+                df_erro_ncm["NOTAS_AFETADAS"] = df_erro_ncm["PRODUTO"].map(counts_ncm)
+                
+                df_erro_cclastrib = df_erro_cclastrib_todos.drop_duplicates(subset=["PRODUTO"]).reset_index(drop=True)
+                df_erro_cclastrib["NOTAS_AFETADAS"] = df_erro_cclastrib["PRODUTO"].map(counts_cclastrib)
+
+                # Organização clara das colunas
+                cols_ordem = ["PRODUTO", "NOTAS_AFETADAS", "NCM_INFORMADA", "NCM_SUGERIDA", "CCLASTRIB_UTILIZADO", "CCLASTRIB_CORRETO", "FILIAL", "REGISTRO", "ALERTA_RETORNO"]
+                
+                df_erro_ncm_view = df_erro_ncm[[c for c in cols_ordem if c in df_erro_ncm.columns]]
+                df_erro_cclastrib_view = df_erro_cclastrib[[c for c in cols_ordem if c in df_erro_cclastrib.columns]]
 
             st.success("Auditoria concluída com sucesso!")
 
-            # Resumo Estatístico
-            total_registos = len(df_resultado)
-            qtd_erro_ncm = len(df_erro_ncm)
-            qtd_erro_cclastrib = len(df_erro_cclastrib)
-            qtd_ok = total_registos - (qtd_erro_ncm + qtd_erro_cclastrib)
+            # Resumo Estatístico Despoluído
+            total_linhas = len(df_resultado)
+            qtd_erro_ncm = len(df_erro_ncm_view)
+            qtd_erro_cclastrib = len(df_erro_cclastrib_view)
+            qtd_ok = total_linhas - (len(df_erro_ncm_todos) + len(df_erro_cclastrib_todos))
 
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Total de Registos", total_registos)
-            col2.metric("Registos OK", qtd_ok)
-            col3.metric("Erros de NCM", qtd_erro_ncm)
-            col4.metric("Erros de CCLASTRIB", qtd_erro_cclastrib)
+            col1.metric("Linhas Analisadas", total_linhas)
+            col2.metric("Linhas OK", qtd_ok)
+            col3.metric("Produtos c/ Erro NCM", qtd_erro_ncm, help=f"Afeta {len(df_erro_ncm_todos)} ocorrências nas notas")
+            col4.metric("Produtos c/ Erro CCLASTRIB", qtd_erro_cclastrib, help=f"Afeta {len(df_erro_cclastrib_todos)} ocorrências nas notas")
 
-            st.subheader("📋 Inconsistências Encontradas")
+            st.subheader("📋 Inconsistências Encontradas (Lista Única por Produto)")
 
             if qtd_erro_ncm == 0 and qtd_erro_cclastrib == 0:
                 st.balloons()
                 st.success("🎉 Nenhuma inconsistência encontrada! Todos os registos estão em conformidade.")
             else:
                 tab_ncm, tab_cclastrib = st.tabs([
-                    f"⚠️ Inconsistências NCM ({qtd_erro_ncm})", 
-                    f"⚠️ Inconsistências CCLASTRIB ({qtd_erro_cclastrib})"
+                    f"⚠️ Inconsistências NCM ({qtd_erro_ncm} produtos)", 
+                    f"⚠️ Inconsistências CCLASTRIB ({qtd_erro_cclastrib} produtos)"
                 ])
 
                 with tab_ncm:
                     if qtd_erro_ncm > 0:
-                        st.dataframe(df_erro_ncm, use_container_width=True)
+                        st.dataframe(df_erro_ncm_view, use_container_width=True)
                     else:
                         st.info("Nenhuma inconsistência de NCM encontrada.")
 
                 with tab_cclastrib:
                     if qtd_erro_cclastrib > 0:
-                        st.dataframe(df_erro_cclastrib, use_container_width=True)
+                        st.dataframe(df_erro_cclastrib_view, use_container_width=True)
                     else:
                         st.info("Nenhuma inconsistência de CCLASTRIB encontrada.")
 
-                # Gerar Excel com 2 abas separadas
+                # Excel de Download Despoluído (Apenas 2 abas por produto com a coluna NOTAS_AFETADAS)
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    df_erro_ncm.to_excel(writer, sheet_name="Inconsistências NCM", index=False)
-                    df_erro_cclastrib.to_excel(writer, sheet_name="Inconsistências CCLASTRIB", index=False)
+                    df_erro_ncm_view.to_excel(writer, sheet_name="Inconsistências NCM", index=False)
+                    df_erro_cclastrib_view.to_excel(writer, sheet_name="Inconsistências CCLASTRIB", index=False)
                 excel_bytes = buffer.getvalue()
 
                 st.download_button(
