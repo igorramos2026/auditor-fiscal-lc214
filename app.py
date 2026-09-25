@@ -14,8 +14,12 @@ st.set_page_config(
 CCLASTRIB_INTEGRAL = "000001"
 ARQUIVO_ANEXOS_FIXO = "anexos_lc214.xlsx"
 
-# CFOPs mapeados para regras especiais de CCLASTRIB (Incluído CFOP 5409 em Transferência)
-CFOPS_TRANSFERENCIA = ["5151", "5152", "5153", "5155", "5156", "5409", "6151", "6152", "6153", "6155", "6156", "7151", "7152"]
+# CFOPs mapeados para regras especiais de CCLASTRIB (Incluídos CFOPs 5209, 5409, 6209 e 6409 em Transferência)
+CFOPS_TRANSFERENCIA = [
+    "5151", "5152", "5153", "5155", "5156", "5209", "5409", 
+    "6151", "6152", "6153", "6155", "6156", "6209", "6409", 
+    "7151", "7152"
+]
 CFOPS_CONSERTO = ["5915", "6915", "7915"]
 
 def formatar_cfop(cfop_raw):
