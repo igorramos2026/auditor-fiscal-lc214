@@ -12,17 +12,38 @@ st.set_page_config(
 
 CCLASTRIB_INTEGRAL = "000001"
 
+def formatar_cclastrib(val_raw):
+    """Garante que o CCLASTRIB tenha sempre 6 dígitos com zeros à esquerda (ex: '000001')."""
+    if pd.isna(val_raw) or val_raw is None:
+        return ""
+    s = str(val_raw).strip()
+    if s.endswith('.0'):
+        s = s[:-2]
+    digits = re.sub(r'\D', '', s)
+    if digits:
+        return digits.zfill(6)
+    return s
+
 def formatar_ncm(ncm_raw):
-    digits = re.sub(r'\D', '', str(ncm_raw)).zfill(8)
-    if len(digits) == 8:
-        return f"{digits[:4]}.{digits[4:6]}.{digits[6:]}", digits
-    return str(ncm_raw), digits
+    """Garante que a NCM tenha 8 dígitos preenchidos com zeros à esquerda."""
+    if pd.isna(ncm_raw) or ncm_raw is None:
+        return "", ""
+    s = str(ncm_raw).strip()
+    if s.endswith('.0'):
+        s = s[:-2]
+    digits = re.sub(r'\D', '', s)
+    if not digits:
+        return str(ncm_raw), ""
+    digits = digits.zfill(8)
+    if len(digits) > 8:
+        digits = digits[:8]
+    return f"{digits[:4]}.{digits[4:6]}.{digits[6:]}", digits
 
 def extrair_base_anexos(file_anexos):
     xls = pd.ExcelFile(file_anexos)
     mapa_anexos = {}
     for sheet_name in xls.sheet_names:
-        df = pd.read_excel(xls, sheet_name=sheet_name)
+        df = pd.read_excel(xls, sheet_name=sheet_name, dtype=str)
         if df.empty:
             continue
         cclastrib_raw = str(df.iloc[0, 0])
@@ -45,17 +66,25 @@ def buscar_campo(row, nomes_possiveis):
     for nome in nomes_possiveis:
         for col in row.index:
             if str(col).strip().upper() == nome.upper() and pd.notna(row[col]):
-                return str(row[col]).strip()
+                return row[col]
     return ""
 
 def auditar_linha(row, mapa_anexos):
-    filial = buscar_campo(row, ['FILIAL', 'L_FILIAL', 'COD_FILIAL'])
-    registro = buscar_campo(row, ['REGISTRO', 'L_REGISTRO_NOTA', 'REGISTRO_NOTA', 'NOTA'])
-    desc_produto = buscar_campo(row, ['DESCRIÇÃO PRODUTO', 'DESCRICAO PRODUTO', 'X_DESC_PRODUTO', 'PRODUTO', 'DESCRICAO'])
+    filial = str(buscar_campo(row, ['FILIAL', 'L_FILIAL', 'COD_FILIAL'])).strip()
+    if filial.endswith('.0'):
+        filial = filial[:-2]
+        
+    registro = str(buscar_campo(row, ['REGISTRO', 'L_REGISTRO_NOTA', 'REGISTRO_NOTA', 'NOTA'])).strip()
+    if registro.endswith('.0'):
+        registro = registro[:-2]
+
+    desc_produto = str(buscar_campo(row, ['DESCRIÇÃO PRODUTO', 'DESCRICAO PRODUTO', 'X_DESC_PRODUTO', 'PRODUTO', 'DESCRICAO'])).strip()
+    
     ncm_raw = buscar_campo(row, ['NCM', 'X_NCM', 'NCM_PRODUTO'])
-    cclastrib_utilizado = buscar_campo(row, ['CCLASTRIB UTILIZADO', 'CCLASTRIB', 'X_CLASSTRIB', 'CLASSTRIB'])
+    cclastrib_raw = buscar_campo(row, ['CCLASTRIB UTILIZADO', 'CCLASTRIB', 'X_CLASSTRIB', 'CLASSTRIB', 'CCLASTRIB_UTILIZADO'])
 
     ncm_fmt, ncm_digits = formatar_ncm(ncm_raw)
+    cclastrib_utilizado = formatar_cclastrib(cclastrib_raw)
     desc_upper = desc_produto.upper()
 
     # ETAPA 1: COERÊNCIA DA NCM
@@ -132,7 +161,7 @@ if file_anexos and file_vendas:
     if st.button("🚀 Iniciar Auditoria", type="primary"):
         with st.spinner("A processar a tabela de Anexos e a auditar as vendas..."):
             mapa_anexos = extrair_base_anexos(file_anexos)
-            df_vendas = pd.read_excel(file_vendas)
+            df_vendas = pd.read_excel(file_vendas, dtype=str)
             resultados = [auditar_linha(row, mapa_anexos) for _, row in df_vendas.iterrows()]
             df_resultado = pd.DataFrame(resultados)
 
